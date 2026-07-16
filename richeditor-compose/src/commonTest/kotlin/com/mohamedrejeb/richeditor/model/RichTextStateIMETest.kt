@@ -323,6 +323,191 @@ class RichTextStateIMETest {
     }
 
     @Test
+    fun testEnterAtStartOfOrderedListThenIMERemovesInsertedPrefix() {
+        val state = RichTextState()
+        state.setMarkdown(
+            """
+                1. Раз
+                2. Два
+                3. Три
+
+                1. Четыре
+                2. Пять
+            """.trimIndent()
+        )
+
+        val textBeforeEnter = state.annotatedString.text
+        state.selection = TextRange(0)
+
+        // First Android update: Enter before the first rendered "1. ".
+        state.onTextFieldValueChange(
+            TextFieldValue(
+                text = "\n$textBeforeEnter",
+                selection = TextRange(1),
+            )
+        )
+        state.assertInvariants("after Enter at document start")
+
+        // Follow-up IME update: the keyboard keeps the newline but does not know about
+        // the "2. " prefix inserted by the editor for the shifted first item.
+        state.onTextFieldValueChange(
+            TextFieldValue(
+                text = "1. \n" + textBeforeEnter.substring("1. ".length),
+                selection = TextRange("1. \n".length),
+            )
+        )
+        state.assertInvariants("after IME prefix removal at document start")
+
+        val textAfterRevert = state.toText()
+        assertTrue(textAfterRevert.contains("Раз"), "First item text should survive")
+        assertTrue(textAfterRevert.contains("Два"), "Second item text should survive")
+        assertTrue(textAfterRevert.contains("Три"), "Third item text should survive")
+        assertTrue(textAfterRevert.contains("Четыре"), "Second list first item should survive")
+        assertTrue(textAfterRevert.contains("Пять"), "Second list second item should survive")
+
+        val htmlAfterRevert = state.toHtml()
+        assertFalse(
+            htmlAfterRevert.contains("2&period;"),
+            "List markers must not be serialized as user text: $htmlAfterRevert"
+        )
+
+        val textBeforeSecondEnter = state.annotatedString.text
+        val selectionBeforeSecondEnter = state.selection.min
+        val secondEnterImeText = textBeforeSecondEnter.substring(0, selectionBeforeSecondEnter) +
+            "\n" +
+            textBeforeSecondEnter.substring(selectionBeforeSecondEnter)
+
+        state.onTextFieldValueChange(
+            TextFieldValue(
+                text = secondEnterImeText,
+                selection = TextRange(selectionBeforeSecondEnter + 1),
+            )
+        )
+        state.assertInvariants("after second Enter at document start")
+
+        state.onTextFieldValueChange(
+            TextFieldValue(
+                text = secondEnterImeText,
+                selection = TextRange(selectionBeforeSecondEnter + 1),
+            )
+        )
+        state.assertInvariants("after second IME prefix removal at document start")
+
+        val textAfterSecondEnter = state.toText()
+        assertTrue(textAfterSecondEnter.contains("Раз"), "First item text should survive second Enter")
+        assertTrue(textAfterSecondEnter.contains("Два"), "Second item text should survive second Enter")
+        assertTrue(textAfterSecondEnter.contains("Три"), "Third item text should survive second Enter")
+        assertTrue(textAfterSecondEnter.contains("Четыре"), "Second list first item should survive second Enter")
+        assertTrue(textAfterSecondEnter.contains("Пять"), "Second list second item should survive second Enter")
+    }
+
+    @Test
+    fun testEnterAtStartOfHtmlOrderedListsThenIMERemovesInsertedPrefix() {
+        val state = RichTextState()
+        state.setHtml(
+            """
+                <ol><li>Раз</li><li>Два</li><li>Три</li></ol>
+                <br>
+                <ol><li>Четыре</li><li>Пять</li></ol>
+            """.trimIndent()
+        )
+
+        val textBeforeEnter = state.annotatedString.text
+        state.selection = TextRange(0)
+
+        state.onTextFieldValueChange(
+            TextFieldValue(
+                text = "\n$textBeforeEnter",
+                selection = TextRange(1),
+            )
+        )
+        state.assertInvariants("html after Enter at document start")
+
+        state.onTextFieldValueChange(
+            TextFieldValue(
+                text = "1. \n" + textBeforeEnter.substring("1. ".length),
+                selection = TextRange("1. \n".length),
+            )
+        )
+        state.assertInvariants("html after IME prefix removal at document start")
+
+        val textAfterRevert = state.toText()
+        assertTrue(textAfterRevert.contains("Раз"), "First item text should survive")
+        assertTrue(textAfterRevert.contains("Два"), "Second item text should survive")
+        assertTrue(textAfterRevert.contains("Три"), "Third item text should survive")
+        assertTrue(textAfterRevert.contains("Четыре"), "Second list first item should survive")
+        assertTrue(textAfterRevert.contains("Пять"), "Second list second item should survive")
+    }
+
+    @Test
+    fun testTwoPlainTextFieldEntersAtStartOfHtmlOrderedLists() {
+        val state = RichTextState()
+        state.setHtml(
+            """
+                <ol><li>Раз</li><li>Два</li><li>Три</li></ol>
+                <br>
+                <ol><li>Четыре</li><li>Пять</li></ol>
+            """.trimIndent()
+        )
+
+        repeat(2) { step ->
+            val text = state.annotatedString.text
+            val selection = state.selection.min
+            state.onTextFieldValueChange(
+                TextFieldValue(
+                    text = text.substring(0, selection) + "\n" + text.substring(selection),
+                    selection = TextRange(selection + 1),
+                )
+            )
+            state.assertInvariants("after plain Enter ${step + 1}")
+        }
+
+        val textAfterEnter = state.toText()
+        assertTrue(textAfterEnter.contains("Раз"), "First item text should survive")
+        assertTrue(textAfterEnter.contains("Два"), "Second item text should survive")
+        assertTrue(textAfterEnter.contains("Три"), "Third item text should survive")
+        assertTrue(textAfterEnter.contains("Четыре"), "Second list first item should survive")
+        assertTrue(textAfterEnter.contains("Пять"), "Second list second item should survive")
+    }
+
+    @Test
+    fun testEnterBeforeEmptyFirstOrderedItemCreatedByPreviousEnter() {
+        val state = RichTextState()
+        state.setHtml(
+            """
+                <ol><li>Раз</li><li>Два</li><li>Три</li></ol>
+                <br>
+                <ol><li>Четыре</li><li>Пять</li></ol>
+            """.trimIndent()
+        )
+
+        state.selection = TextRange(0)
+        state.onTextFieldValueChange(
+            TextFieldValue(
+                text = "\n${state.annotatedString.text}",
+                selection = TextRange(1),
+            )
+        )
+        state.assertInvariants("after first Enter before first item")
+
+        state.selection = TextRange(0)
+        state.onTextFieldValueChange(
+            TextFieldValue(
+                text = "\n${state.annotatedString.text}",
+                selection = TextRange(1),
+            )
+        )
+        state.assertInvariants("after second Enter before empty first item")
+
+        val textAfterEnter = state.toText()
+        assertTrue(textAfterEnter.contains("Раз"), "First item text should survive: $textAfterEnter")
+        assertTrue(textAfterEnter.contains("Два"), "Second item text should survive: $textAfterEnter")
+        assertTrue(textAfterEnter.contains("Три"), "Third item text should survive: $textAfterEnter")
+        assertTrue(textAfterEnter.contains("Четыре"), "Second list first item should survive: $textAfterEnter")
+        assertTrue(textAfterEnter.contains("Пять"), "Second list second item should survive: $textAfterEnter")
+    }
+
+    @Test
     fun testEnterWithAutocorrectThatShortensText() {
         // This is the exact #640 scenario:
         // Composed: "hellooo" (7 chars) → autocorrect: "hello" (5 chars) + "\n" → net -1
