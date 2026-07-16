@@ -4,7 +4,15 @@ plugins {
 
 mavenPublishing {
     publishToMavenCentral()
-    signAllPublications()
+
+    // Sign only when a signatory is actually configured (Maven Central release).
+    // Local publishing (publishToMavenLocal) has no GPG key — skip signing there.
+    val signingConfigured = listOf("signing.keyId", "signingInMemoryKey")
+        .any { project.findProperty(it) != null } ||
+        System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey") != null
+    if (signingConfigured) {
+        signAllPublications()
+    }
 
     coordinates(group.toString(), project.name, version.toString())
 
